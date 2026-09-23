@@ -63,6 +63,10 @@ sub PIONEERAVR_Write;
 sub PIONEERAVR_Parse;
 sub RC_layout_PioneerAVR;
 sub PIONEERAVR_RCmakenotify;
+sub PIONEERAVR_UpdateNotifyDev;
+sub PIONEERAVR_PowerSupplyState;
+sub PIONEERAVR_PowerSupplyChanged;
+sub PIONEERAVR_OpenDev;
 
 #####################################
 #Die Funktion wird von Fhem.pl nach dem Laden des Moduls aufgerufen
@@ -115,6 +119,8 @@ sub PIONEERAVR_Initialize {
       connectionCheck:off,30,45,60,75,90,105,120
       timeout:1,2,3,4,5,7,10,15
       alternateVolumeControl:enable,disable
+      powerSupplyDevice
+      reconnectInterval
     );
     use warnings 'qw';
     $hash->{AttrList} = join( " ", @attrList ) . " " . $readingFnAttributes;
@@ -189,6 +195,10 @@ sub PIONEERAVR_Define {
     # $hash->{DeviceName} is needed for DevIo_OpenDev()
     $hash->{Protocol}   = $protocol;
     $hash->{DeviceName} = $devicename;
+    $hash->{nextOpenDelay} = AttrVal( $name, "reconnectInterval", 60 );
+    $hash->{helper}{powerSupplyDevice} =
+      AttrVal( $name, "powerSupplyDevice", "" );
+    PIONEERAVR_UpdateNotifyDev($hash);
 
     # connect using serial connection (old blocking style)
     if ( $hash->{Protocol} eq "serial" ) {
@@ -1364,14 +1374,9 @@ sub PIONEERAVR_Ready {
 
     if ( ReadingsVal( $name, "state", "disconnected" ) eq "disconnected" ) {
 
-        DevIo_OpenDev(
-            $hash, 1, undef,
-            sub() {
-                my $hash = shift;
-                my $err  = shift;
-                Log3 $name, 4, "PIONEERAVR $name: $err" if ($err);
-            }
-        );
+        return if ( PIONEERAVR_PowerSupplyState($hash) eq "off" );
+
+        PIONEERAVR_OpenDev( $hash, 1 );
 
         return;
     }
@@ -1397,9 +1402,22 @@ sub PIONEERAVR_Notify {
     return
       if ( !$dev->{CHANGED} );    # Some previous notify deleted the array.
 
+    my $powerSupplyDevice = $hash->{helper}{powerSupplyDevice} // "";
+    my ($powerSupplyName) = split( /:/, $powerSupplyDevice, 2 );
+
+    if ( $powerSupplyName && $devName eq $powerSupplyName ) {
+        PIONEERAVR_PowerSupplyChanged($hash);
+        return;
+    }
+
     # work on global events related to us
     if ( $devName eq "global" ) {
         for my $change ( @{ $dev->{CHANGED} } ) {
+            if ( $change eq "INITIALIZED" || $change eq "REREADCFG" ) {
+                PIONEERAVR_PowerSupplyChanged($hash);
+                next;
+            }
+
             if (   $change !~ /^(\w+)\s(\w+)\s?(\w*)\s?(.*)$/
                 || $2 ne $name )
             {
@@ -3990,13 +4008,130 @@ m/^SUL(\d)(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})
 
 #####################################
 sub PIONEERAVR_Attr {
-    my @a    = @_;
-    my $hash = $defs{ $a[1] };
+    my ( $cmd, $name, $attrName, $attrValue ) = @_;
+    my $hash = $defs{$name};
+
+    if ( $attrName eq "reconnectInterval" ) {
+        if ( $cmd eq "set" ) {
+            return "reconnectInterval must be an integer between 1 and 300 seconds"
+              if ( $attrValue !~ /^\d+$/
+                || $attrValue < 1
+                || $attrValue > 300 );
+
+            $hash->{nextOpenDelay} = $attrValue;
+        }
+        else {
+            delete $hash->{nextOpenDelay};
+        }
+    }
+    elsif ( $attrName eq "powerSupplyDevice" ) {
+        if ( $cmd eq "set" ) {
+            return "powerSupplyDevice must use the format <device>:<reading>"
+              if ( $attrValue !~ /^[^:]+:[^:]+$/ );
+
+            $hash->{helper}{powerSupplyDevice} = $attrValue;
+        }
+        else {
+            delete $hash->{helper}{powerSupplyDevice};
+            delete $hash->{helper}{powerSupplyState};
+        }
+
+        PIONEERAVR_UpdateNotifyDev($hash);
+        PIONEERAVR_PowerSupplyChanged($hash) if ( $cmd eq "set" );
+    }
+
     return;
 }
 
 #####################################
 # helper functions
+#####################################
+sub PIONEERAVR_UpdateNotifyDev {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    my $powerSupplyDevice = $hash->{helper}{powerSupplyDevice} // "";
+    my ($powerSupplyName) = split( /:/, $powerSupplyDevice, 2 );
+    my @notifyDevices = ( "global", $name );
+
+    push @notifyDevices, $powerSupplyName if ($powerSupplyName);
+    setNotifyDev( $hash, join( ",", @notifyDevices ) );
+    return;
+}
+
+#####################################
+sub PIONEERAVR_PowerSupplyState {
+    my ($hash) = @_;
+    my $powerSupplyDevice = $hash->{helper}{powerSupplyDevice} // "";
+    my ( $device, $reading ) = split( /:/, $powerSupplyDevice, 2 );
+
+    return "" if ( !$device || !$reading );
+    return lc( ReadingsVal( $device, $reading, "" ) );
+}
+
+#####################################
+sub PIONEERAVR_PowerSupplyChanged {
+    my ($hash) = @_;
+    my $name = $hash->{NAME};
+    my $powerSupplyState = PIONEERAVR_PowerSupplyState($hash);
+
+    return
+      if ( $powerSupplyState ne "on" && $powerSupplyState ne "off" );
+    return
+      if ( ( $hash->{helper}{powerSupplyState} // "" ) eq $powerSupplyState );
+
+    $hash->{helper}{powerSupplyState} = $powerSupplyState;
+    Log3 $name, 4,
+      "PIONEERAVR $name: power supply changed to $powerSupplyState";
+
+    if ( $powerSupplyState eq "off" ) {
+        RemoveInternalTimer($hash);
+        DevIo_CloseDev($hash);
+        DevIo_setStates( $hash, "disconnected" );
+        DoTrigger( $name, "DISCONNECTED" );
+        return;
+    }
+
+    return if ( ReadingsVal( $name, "state", "" ) eq "opened" );
+
+    delete $hash->{NEXT_OPEN};
+    PIONEERAVR_OpenDev( $hash, 1 );
+    return;
+}
+
+#####################################
+sub PIONEERAVR_OpenDev {
+    my ( $hash, $reopen, $statusUpdate ) = @_;
+    my $name = $hash->{NAME};
+
+    return if ( $hash->{Protocol} ne "telnet" );
+    return if ( PIONEERAVR_PowerSupplyState($hash) eq "off" );
+
+    DevIo_OpenDev(
+        $hash, $reopen, undef,
+        sub() {
+            my $hash = shift;
+            my $err  = shift;
+            Log3 $name, 4, "PIONEERAVR $name: $err" if ($err);
+
+            return if ($err);
+            return if ( !$statusUpdate );
+            return if ( ReadingsVal( $name, "state", "" ) ne "opened" );
+
+            if (
+                AttrVal( $name, "statusUpdateReconnect", "enable" ) eq
+                "enable" )
+            {
+                PIONEERAVR_statusUpdate($hash);
+            }
+            else {
+                # Update the power state after reconnecting.
+                PIONEERAVR_Write( $hash, "?P" );
+            }
+        }
+    );
+    return;
+}
+
 #####################################
 #Function to show special chars (e.g. \n\r) in logs
 sub dq {
@@ -4043,20 +4178,9 @@ sub PIONEERAVR_Reopen {
     Log3 $name, 5, "PIONEERAVR $name: PIONEERAVR_Reopen()";
 
     DevIo_CloseDev($hash);
-    my $ret = DevIo_OpenDev( $hash, 1, undef );
-
-    if ( $hash->{STATE} eq "opened" ) {
-        Log3 $name, 5, "PIONEERAVR $name: PIONEERAVR_Reopen() -> now opened";
-
-        if ( AttrVal( $name, "statusUpdateReconnect", "enable" ) eq "enable" ) {
-            PIONEERAVR_statusUpdate($hash);
-        }
-        else {
-           # update state by requesting power on/off status from the Pioneer AVR
-            PIONEERAVR_Write( $hash, "?P" );
-        }
-    }
-    return $ret;
+    delete $hash->{NEXT_OPEN};
+    PIONEERAVR_OpenDev( $hash, 1, 1 );
+    return;
 }
 #####################################
 # writing to the Pioneer AV receiver
@@ -4524,6 +4648,12 @@ sub RC_layout_PioneerAVR() {
        <b>connectionCheck</b> &nbsp;&nbsp;1..120,off&nbsp;&nbsp; Pings the Pioneer AVR every X seconds to verify connection status. Defaults to 60 seconds.
     </li>
     <li>
+       <b>powerSupplyDevice &lt;device:reading&gt;</b> &nbsp;&nbsp; Optional FHEM device and reading that report the external power supply as <code>on</code> or <code>off</code>. When it changes to <code>off</code>, the module closes the connection and sets presence to absent. When it changes to <code>on</code>, the module immediately starts non-blocking reconnect attempts.
+    </li>
+    <li>
+       <b>reconnectInterval &lt;1 ... 300&gt;</b> &nbsp;&nbsp; Delay in seconds between reconnect attempts. Defaults to the DevIo interval of 60 seconds when the attribute is not set.
+    </li>
+    <li>
         <b>timeout</b> &nbsp;&nbsp;1,2,3,4,5,7,10,15&nbsp;&nbsp; Max time in seconds till the Pioneer AVR replies to a ping. Defaults to 3 seconds.
     </li>
     <li><b>checkStatusStart &lt;enable|disable&gt;</b> - Enables/disables the status update (read all values from the Pioneer AV receiver, can take up to one minute) when the module is loaded.(Default: enable)</li>
@@ -4800,6 +4930,12 @@ sub RC_layout_PioneerAVR() {
     <ul>
     <li>
         <b>connectionCheck</b> &nbsp;&nbsp;1..120,off&nbsp;&nbsp; Pingt den Pioneer AV Receiver alle X Sekunden um den Datenverbindungsstatus zu überprüfen. Standard: 60 Sekunden.
+    </li>
+    <li>
+        <b>powerSupplyDevice &lt;device:reading&gt;</b> &nbsp;&nbsp; Optionales FHEM-Device und Reading, das die externe Stromversorgung als <code>on</code> oder <code>off</code> meldet. Bei <code>off</code> schlie&szlig;t das Modul die Verbindung und setzt presence auf absent. Bei <code>on</code> beginnt es sofort mit nicht blockierenden Wiederverbindungsversuchen.
+    </li>
+    <li>
+        <b>reconnectInterval &lt;1 ... 300&gt;</b> &nbsp;&nbsp; Abstand zwischen Wiederverbindungsversuchen in Sekunden. Ohne dieses Attribut gilt das DevIo-Standardintervall von 60 Sekunden.
     </li>
     <li>
         <b> timeout</b> &nbsp;&nbsp;1,2,3,4,5,7,10,15&nbsp;&nbsp;Zeit in Sekunden, innerhalb der der Pioneer AV Receiver auf einen Ping antwortet. Standard: 3 Sekunden.
