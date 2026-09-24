@@ -4125,7 +4125,7 @@ sub PIONEERAVR_OpenDev {
     return if ( PIONEERAVR_PowerSupplyState($hash) eq "off" );
 
     DevIo_OpenDev(
-        $hash, $reopen, "PIONEERAVR_DevInit",
+        $hash, $reopen, undef,
         sub() {
             my $hash = shift;
             my $err  = shift;
