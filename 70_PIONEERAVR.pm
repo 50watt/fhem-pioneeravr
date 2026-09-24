@@ -226,12 +226,9 @@ sub PIONEERAVR_Define {
 
     $hash->{helper}{receiver} = undef;
 
-    unless ( exists( $hash->{helper}{AVAILABLE} )
-        and ( $hash->{helper}{AVAILABLE} == 0 ) )
-    {
-        $hash->{helper}{AVAILABLE} = 1;
-        readingsSingleUpdate( $hash, "presence", "present", 1 );
-    }
+    $hash->{helper}{AVAILABLE} = 0;
+    readingsSingleUpdate( $hash, "presence", "absent", 1 )
+      if ( ReadingsVal( $name, "presence", "-" ) ne "absent" );
 
 # $hash->{helper}{INPUTNAMES} lists the default input names and their inputNr as provided by Pioneer.
 # This module can read those names and the alias names from the AVR receiver and can try to check if this input is enabled or disabled
@@ -1469,6 +1466,9 @@ sub PIONEERAVR_Notify {
             # disable connectionCheck and wait
             # until DevIo reopened the connection
             RemoveInternalTimer($hash);
+            delete $hash->{helper}{nextConnectionCheck};
+            $hash->{helper}{AVAILABLE} = 0;
+            $hash->{PARTIAL} = "";
 
             readingsBulkUpdate( $hash, "presence", "absent" )
               if ( $presence ne "absent" );
@@ -1501,28 +1501,16 @@ sub PIONEERAVR_Notify {
             Log3 $hash, 5,
               "PIONEERAVR " . $name . ": processing change $change";
 
-            readingsBulkUpdate( $hash, "presence", "present" )
-              if ( $presence ne "present" );
+            # An open socket does not yet prove that the receiver is ready.
+            # PIONEERAVR_Read marks it present after the first complete reply.
+            $hash->{helper}{AVAILABLE} = 0;
+            readingsBulkUpdate( $hash, "presence", "absent" )
+              if ( $presence ne "absent" );
 
-            # stateAV
-            my $stateAV = PIONEERAVR_GetStateAV($hash);
-            readingsBulkUpdate( $hash, "stateAV", $stateAV )
-              if ( ReadingsVal( $name, "stateAV", "-" ) ne $stateAV );
+            readingsBulkUpdate( $hash, "stateAV", "absent" )
+              if ( ReadingsVal( $name, "stateAV", "-" ) ne "absent" );
 
             PIONEERAVR_Write( $hash, "?P\n\r?M\n\r?V\n\r\?F\n\r" );
-
-            # send to slaves
-            if ( $definedZones > 1 ) {
-                Log3 $name, 5,
-                  "PIONEERAVR $name: Dispatching state change to slaves";
-                Dispatch(
-                    $hash,
-                    {
-                        "presence" => "present",
-                    },
-                    undef
-                );
-            }
 
         }
     }
@@ -2350,10 +2338,11 @@ sub PIONEERAVR_Get {
 sub PIONEERAVR_Read {
     my $hash = shift;
 
-    my $name       = $hash->{NAME};
-    my $state      = '';
-    my $msgForZone = "";
-    my $buf        = '';
+    my $name            = $hash->{NAME};
+    my $state           = '';
+    my $msgForZone      = "";
+    my $buf             = '';
+    my $becameAvailable = 0;
 
     #include previous partial message
     if ( defined( $hash->{PARTIAL} ) && $hash->{PARTIAL} ) {
@@ -2393,6 +2382,15 @@ sub PIONEERAVR_Read {
    # if the information in the line is not for the main zone it is dispatched to
    #    all listening modules otherwise we process it here
     readingsBeginUpdate($hash);
+
+    # Only a complete protocol reply proves that the receiver is ready.
+    # A successful TCP connection alone can occur while the AVR is booting.
+    if ( $buf =~ /[^\r\n]+\r\n/ ) {
+        $becameAvailable = !( $hash->{helper}{AVAILABLE} // 0 );
+        $hash->{helper}{AVAILABLE} = 1;
+        readingsBulkUpdate( $hash, "presence", "present" )
+          if ( ReadingsVal( $name, "presence", "absent" ) ne "present" );
+    }
 
     while ( $buf =~ m/^(.*?)\r\n(.*)\Z/s ) {
         my $line = $1;
@@ -4000,6 +3998,26 @@ m/^SUL(\d)(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})(\d{3})
         }
     }
 
+    if ($becameAvailable) {
+        my $stateAV = PIONEERAVR_GetStateAV($hash);
+        readingsBulkUpdate( $hash, "stateAV", $stateAV )
+          if ( ReadingsVal( $name, "stateAV", "-" ) ne $stateAV );
+
+        my $definedZones =
+          scalar keys %{ $modules{PIONEERAVR_ZONE}{defptr}{$name} };
+        if ( $definedZones > 1 ) {
+            Log3 $name, 5,
+              "PIONEERAVR $name: Dispatching state change to slaves";
+            Dispatch(
+                $hash,
+                {
+                    "presence" => "present",
+                },
+                undef
+            );
+        }
+    }
+
     readingsEndUpdate( $hash, 1 );
 
     $hash->{PARTIAL} = $buf;
@@ -4107,7 +4125,7 @@ sub PIONEERAVR_OpenDev {
     return if ( PIONEERAVR_PowerSupplyState($hash) eq "off" );
 
     DevIo_OpenDev(
-        $hash, $reopen, undef,
+        $hash, $reopen, "PIONEERAVR_DevInit",
         sub() {
             my $hash = shift;
             my $err  = shift;
