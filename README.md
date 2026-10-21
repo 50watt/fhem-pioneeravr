@@ -1,0 +1,174 @@
+# fhem-pioneeravr
+
+FHEM-Module zur Steuerung von Pioneer AV-Receivern über TCP/IP oder RS232.
+`PIONEERAVR` übernimmt die Verbindung und die Main Zone;
+`PIONEERAVRZONE` steuert zusätzliche Zonen, soweit der Receiver sie unterstützt.
+
+## Stand
+
+Dieses Repository enthält den veröffentlichten **FHEM-SVN-Stand r31821**
+vom 20. Oktober 2026. Die letzte Änderung von `70_PIONEERAVR.pm` ist r31821,
+die von `71_PIONEERAVRZONE.pm` r31819.
+
+Die Moduldateien stammen unverändert aus diesem SVN-Stand. Die deutsche und
+englische Commandref ist jeweils im Modul enthalten. Eine Übersicht der
+Änderungen steht im [Changelog](CHANGELOG.md).
+
+## Funktionen
+
+- Steuerung von Power, Lautstärke, Mute, Eingang und weiteren modellabhängigen
+  Audio-/Videoeinstellungen.
+- Zusätzliche Zonen über `PIONEERAVRZONE`: `zone2`, `zone3` und `hdZone`.
+- Zeitgesteuerte Befehlsübertragung mit mindestens 100 ms Abstand;
+  Bedienbefehle haben Vorrang vor umfangreichen Hintergrundabfragen.
+- Asynchrone Verbindungsprüfung für die Netzwerkverbindung.
+- Kommunikationspause über `disable`, einschließlich zugeordneter Zonen.
+- Reading `statusRequestState` für vollständige Statusabfragen.
+- Receiverbestätigtes Reading `networkStandby`; das bisherige Internal bleibt
+  aus Kompatibilitätsgründen erhalten.
+- Umbenennen von Eingängen mit Leerzeichen im Alias und Prüfung der
+  maximal 14 druckbaren ASCII-Zeichen.
+
+## Installation und Aktualisierung
+
+Für normale FHEM-Installationen können die veröffentlichten Module über das
+reguläre FHEM-Update bezogen werden. Die folgenden Schritte sind für die
+manuelle Installation des hier enthaltenen Stands gedacht.
+
+Im Repository-Verzeichnis ausführen; den FHEM-Pfad bei Bedarf anpassen:
+
+```bash
+(
+set -e
+backup_dir=$(mktemp -d /tmp/pioneeravr-backup-XXXXXXXX)
+sudo cp -p /opt/fhem/FHEM/70_PIONEERAVR.pm "$backup_dir/"
+sudo cp -p /opt/fhem/FHEM/71_PIONEERAVRZONE.pm "$backup_dir/"
+sudo cp 70_PIONEERAVR.pm 71_PIONEERAVRZONE.pm /opt/fhem/FHEM/
+printf 'Sicherung: %s\n' "$backup_dir"
+)
+```
+
+Die Sicherungsbefehle setzen voraus, dass beide Module bereits installiert
+sind. Bei einer Erstinstallation nur vorhandene Dateien sichern. Bei einem
+Fehler zuerst dessen Ursache klären, bevor die Dateien ersetzt werden.
+
+Danach in der **FHEM-Kommandozeile**:
+
+```text
+reload 70_PIONEERAVR
+reload 71_PIONEERAVRZONE
+```
+
+Ein späteres reguläres FHEM-Update kann manuell installierte Dateien wieder
+durch den dann aktuellen SVN-Stand ersetzen.
+
+## Einrichtung
+
+Beispiel für einen Receiver über Netzwerk:
+
+```text
+define VSX923 PIONEERAVR telnet 192.168.1.50:8102
+```
+
+IP-Adresse und Port müssen zum Receiver passen. Ohne Portangabe verwendet das
+Modul 8102; einzelne Geräte oder Installationen verwenden einen anderen Port.
+
+Für RS232 lautet die Syntax:
+
+```text
+define <name> PIONEERAVR serial <devicename[@baudrate]>
+```
+
+Zusätzliche Zone, sofern vom Modell unterstützt:
+
+```text
+define VSX923Zone2 PIONEERAVRZONE zone2
+attr VSX923Zone2 IODev VSX923
+```
+
+`IODev` besonders bei mehreren Receivern ausdrücklich setzen.
+
+## Wichtige Befehle und Readings
+
+```text
+set VSX923 statusRequest
+attr VSX923 disable 1
+attr VSX923 disable 0
+```
+
+`disable=1` schließt die Verbindung und verwirft Timer und wartende Befehle.
+Der Receiver wird dabei nicht ausgeschaltet. `state` und `stateAV` zeigen
+`disabled`; andere Readings behalten ihre zuletzt bekannten Werte. Beim
+Wiederaktivieren wird die Verbindung erneut aufgebaut, sofern die konfigurierte
+externe Stromversorgung dies zulässt. Die vollständige Abfrage nach dem
+Wiederverbinden richtet sich nach `statusUpdateReconnect` (Standard: `enable`).
+
+| `statusRequestState` | Bedeutung |
+| --- | --- |
+| `running` | Status- und Eingangsabfragen werden gesendet. |
+| `done` | Alle Abfragen wurden gesendet. |
+| `aborted` | Die Abfrage wurde abgebrochen, z. B. durch disable oder Verbindungsverlust. |
+
+`done` bestätigt **keine erfolgreiche Antwort auf jeden Parameter**. Nicht
+unterstützte oder aktuell nicht verfügbare Abfragen können Receiverfehler
+liefern. Wiederholte vollständige Statusanforderungen teilen sich den laufenden
+Scan. Ein separates `get VSX923 loadInputNames` setzt dieses Reading nicht.
+Ein vollständiger Scan dauert typischerweise etwa 40–60 Sekunden; zusätzliche
+Bedienbefehle oder andere Verzögerungen können die Dauer verlängern.
+
+`networkStandby` zeigt die zuletzt vom Receiver bestätigte Einstellung
+`on` oder `off`. Die Einstellung wird nur durch einen ausdrücklichen
+`set VSX923 networkStandby on/off` geändert, nicht automatisch durch das Modul.
+Bei Telnet und bekanntem `off` wird `set ... on` vor dem Einreihen der
+Einschaltbefehle abgewiesen. Bei unbekannter Einstellung wird ein Versuch
+zugelassen. RS232-Einschalten wird durch Network Standby nicht gesperrt.
+
+Existierende Readings werden bei `get` im Hauptmodul aus dem gespeicherten
+Stand geliefert. `set ... statusRequest` fordert neue Werte vom Receiver an.
+Die vollständige Befehls- und Attributbeschreibung ist in der Commandref
+im jeweiligen Modul bzw. in FHEM verfügbar:
+
+- [PIONEERAVR Commandref](https://fhem.de/commandref.html#PIONEERAVR)
+- [PIONEERAVRZONE Commandref](https://fhem.de/commandref.html#PIONEERAVRZONE)
+
+## Tests
+
+Die Regressionstests laufen mit Perl außerhalb von FHEM:
+
+```bash
+perl t/pioneeravr-timing.t 70_PIONEERAVR.pm
+```
+
+Alternativ mit dem Perl-Testrunner:
+
+```bash
+prove t/pioneeravr-timing.t :: 70_PIONEERAVR.pm
+```
+
+Der aktuelle Stand besteht **74 Testgruppen**. Geprüft werden unter anderem
+Befehlsabstände, Priorisierung, Verbindungsverlust, Wiederverbindung, disable,
+Antwortparser, Eingangsnamen, Nullwerte und Network Standby. Die Tests verwenden
+eine simulierte Uhr und Transport-Doubles; sie lesen keine `fhem.cfg` und öffnen
+keine Receiververbindung.
+
+Hardwareprüfungen erfolgten mit einem **Pioneer VSX-923 über Netzwerk**.
+Andere Modelle und RS232 wurden nicht an echter Hardware geprüft. Automatisierte
+Tests ersetzen diese Prüfung nicht.
+
+## Bekannte Grenzen und Rückmeldungen
+
+- Verfügbare Befehle und Einstellungen hängen vom Receivermodell ab.
+- `statusUpdateStart` ist derzeit ein nicht ausgewertetes Kompatibilitätsattribut.
+- Receiverfehler werden protokolliert; eigene `lastError`-Readings sind noch
+  nicht implementiert.
+- Persistierte Eingangsaliase und Aktivierungen verwenden noch gemeinsame
+  Schlüssel; bei mehreren Receivern ist diese Einschränkung zu beachten.
+
+Bei Fehlerberichten bitte Receivermodell, Verbindungsart, Modulrevision,
+auslösenden Befehl und einen passenden, bereinigten Logauszug angeben.
+
+## Lizenz
+
+Die FHEM-Module stehen gemäß ihren Dateiköpfen unter der GNU GPL Version 2
+oder einer späteren Version. Die vorhandenen Lizenz- und Autorenhinweise
+bleiben unverändert.
