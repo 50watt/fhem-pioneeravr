@@ -6,11 +6,10 @@ FHEM-Module zur Steuerung von Pioneer AV-Receivern über TCP/IP oder RS232.
 
 ## Stand
 
-Basis ist der veröffentlichte **FHEM-SVN-Stand r31821** vom 20. Oktober 2026
-(`70_PIONEERAVR.pm`: r31821, `71_PIONEERAVRZONE.pm`: r31819).
-Darauf aufbauend ergänzt dieser Git-Stand seit dem 31. Oktober 2026 strukturierte
-Metadaten und die Registrierung über `FHEM::Meta`. Diese Ergänzung ist noch nicht
-als neue SVN-Revision bestätigt. Die Steuerlogik bleibt unverändert.
+Dieses Repository enthält den veröffentlichten **FHEM-SVN-Stand r31859**
+vom 31. Oktober 2026. Beide Moduldateien entsprechen bytegenau dem Export
+dieser Revision. Sie enthalten strukturierte Metadaten und die Registrierung
+über `FHEM::Meta`. Die Receiversteuerung wurde dabei nicht geändert.
 
 Die deutsche und englische Commandref ist jeweils im Modul enthalten.
 Eine Übersicht der Änderungen steht im [Changelog](CHANGELOG.md).
@@ -38,10 +37,11 @@ get <Installer-Device> showModuleInfo PIONEERAVR
 get <Installer-Device> showModuleInfo PIONEERAVRZONE
 ```
 
-Die Datei `patches/pioneeravr-metadata.patch` enthält ausschließlich die
-Moduländerungen für den SVN-Checkout. Vor dem Anwenden den Arbeitsstand sichern
-und auf lokale Änderungen prüfen. `svn patch --dry-run` dient zur Vorprüfung.
-Ein SVN-Commit muss ausdrücklich im eigenen Checkout ausgeführt werden.
+Die Datei `patches/pioneeravr-metadata.patch` dokumentiert die ursprüngliche
+Änderung gegenüber r31821/r31819. Sie ist ein historischer Patch und darf auf
+r31859 oder bereits aktualisierte Dateien nicht nochmals angewendet werden.
+Für bestehende Installationen genügt das reguläre FHEM-Update, sobald dessen
+Updatequelle r31859 enthält.
 
 ## Funktionen
 
