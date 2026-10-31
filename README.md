@@ -6,13 +6,42 @@ FHEM-Module zur Steuerung von Pioneer AV-Receivern über TCP/IP oder RS232.
 
 ## Stand
 
-Dieses Repository enthält den veröffentlichten **FHEM-SVN-Stand r31821**
-vom 20. Oktober 2026. Die letzte Änderung von `70_PIONEERAVR.pm` ist r31821,
-die von `71_PIONEERAVRZONE.pm` r31819.
+Basis ist der veröffentlichte **FHEM-SVN-Stand r31821** vom 20. Oktober 2026
+(`70_PIONEERAVR.pm`: r31821, `71_PIONEERAVRZONE.pm`: r31819).
+Darauf aufbauend ergänzt dieser Git-Stand seit dem 31. Oktober 2026 strukturierte
+Metadaten und die Registrierung über `FHEM::Meta`. Diese Ergänzung ist noch nicht
+als neue SVN-Revision bestätigt. Die Steuerlogik bleibt unverändert.
 
-Die Moduldateien stammen unverändert aus diesem SVN-Stand. Die deutsche und
-englische Commandref ist jeweils im Modul enthalten. Eine Übersicht der
-Änderungen steht im [Changelog](CHANGELOG.md).
+Die deutsche und englische Commandref ist jeweils im Modul enthalten.
+Eine Übersicht der Änderungen steht im [Changelog](CHANGELOG.md).
+
+## Metadaten und FHEM Installer
+
+Beide Module deklarieren ihre Perl-/FHEM-Abhängigkeiten in einem `META.json`-Block
+und registrieren ihn über `FHEM::Meta::InitMod`. Enthalten sind Beschreibung,
+Suchbegriffe, Lizenz und Verweise auf Repository, Fehlerberichte und Commandref.
+Die Modulversion wird weiterhin aus dem SVN-`$Id` abgeleitet. Es wird keine
+zusätzliche unabhängige Release-Version eingeführt.
+
+`PIONEERAVR` benötigt `DevIo`, `SetExtensions`, `Time::HiRes` und `FHEM::Meta`.
+`PIONEERAVRZONE` benötigt `SetExtensions`, `Time::HiRes` und `FHEM::Meta` sowie
+ein eingerichtetes `PIONEERAVR`-Hauptgerät als `IODev`. Die Hauptgeräte-Abhängigkeit
+ist eine FHEM-Gerätebeziehung, kein zusätzliches CPAN-Paket.
+Transportspezifische Voraussetzungen wie die serielle Schnittstelle bleiben
+Aufgabe von `DevIo` und der tatsächlich verwendeten Verbindungsart.
+
+Nach Installation beider Dateien und einem FHEM-Neustart lässt sich die
+Registrierung in der FHEM-Kommandozeile prüfen:
+
+```text
+get <Installer-Device> showModuleInfo PIONEERAVR
+get <Installer-Device> showModuleInfo PIONEERAVRZONE
+```
+
+Die Datei `patches/pioneeravr-metadata.patch` enthält ausschließlich die
+Moduländerungen für den SVN-Checkout. Vor dem Anwenden den Arbeitsstand sichern
+und auf lokale Änderungen prüfen. `svn patch --dry-run` dient zur Vorprüfung.
+Ein SVN-Commit muss ausdrücklich im eigenen Checkout ausgeführt werden.
 
 ## Funktionen
 
@@ -145,11 +174,13 @@ Alternativ mit dem Perl-Testrunner:
 prove t/pioneeravr-timing.t :: 70_PIONEERAVR.pm
 ```
 
-Der aktuelle Stand besteht **74 Testgruppen**. Geprüft werden unter anderem
+Der aktuelle Stand besteht **75 Testgruppen**. Geprüft werden unter anderem
 Befehlsabstände, Priorisierung, Verbindungsverlust, Wiederverbindung, disable,
 Antwortparser, Eingangsnamen, Nullwerte und Network Standby. Die Tests verwenden
 eine simulierte Uhr und Transport-Doubles; sie lesen keine `fhem.cfg` und öffnen
-keine Receiververbindung.
+keine Receiververbindung. Die Metadatenregistrierung wird mit einem Test-Double
+für `FHEM::Meta::InitMod` geprüft. Die tatsächliche Installer-Anzeige ist zusätzlich
+im Zielsystem zu prüfen.
 
 Hardwareprüfungen erfolgten mit einem **Pioneer VSX-923 über Netzwerk**.
 Andere Modelle und RS232 wurden nicht an echter Hardware geprüft. Automatisierte

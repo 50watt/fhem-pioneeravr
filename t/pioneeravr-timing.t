@@ -13,6 +13,7 @@ use Scalar::Util qw(refaddr);
 use vars qw(%defs %attr %modules %data $readingFnAttributes $init_done
             $reread_active);
 my ($clock, @writes, @sleeps, @timers);
+my @metadata_initializations;
 
 sub simulated_sleep {
     my ($seconds) = @_;
@@ -25,6 +26,7 @@ BEGIN {
     # Prevent loading real transport helpers from a local FHEM installation.
     $INC{'SetExtensions.pm'} = __FILE__;
     $INC{'DevIo.pm'} = __FILE__;
+    $INC{'FHEM/Meta.pm'} = __FILE__;
     *CORE::GLOBAL::sleep = \&simulated_sleep;
 }
 {
@@ -34,6 +36,7 @@ BEGIN {
 }
 
 sub Log3 { return; }
+sub FHEM::Meta::InitMod { push @metadata_initializations, [@_]; return; }
 sub fhem { die "Unexpected FHEM command in isolated test\n"; }
 sub SetExtensions { die "Unexpected SetExtensions call\n"; }
 sub IOWrite {
@@ -1213,6 +1216,22 @@ subtest 'Network standby: serial power-on works with network standby off' => sub
     is(PIONEERAVR_Set($hash, [$hash->{NAME}, 'on'], {}), undef, 'serial does not require network standby');
     drain_send_timers();
     is_deeply(commands(), ['', '', "\n\rPO", "\n\rPO"], 'serial power-on sequence preserved');
+};
+
+subtest 'Metadata registration preserves module callbacks' => sub {
+    plan skip_all => 'Metadata registration is not part of the historical baseline'
+      if $baseline;
+    @metadata_initializations = ();
+    my ($receiver_module, $zone_module) = ({}, {});
+    is(PIONEERAVR_Initialize($receiver_module), undef, 'receiver initializes');
+    is(PIONEERAVRZONE_Initialize($zone_module), undef, 'zone initializes');
+    is(scalar(@metadata_initializations), 2, 'both modules register metadata');
+    like($metadata_initializations[0][0], qr/70_PIONEERAVR\.pm\z/, 'receiver source path registered');
+    like($metadata_initializations[1][0], qr/71_PIONEERAVRZONE\.pm\z/, 'zone source path registered');
+    is(refaddr($metadata_initializations[0][1]), refaddr($receiver_module), 'receiver module hash passed');
+    is(refaddr($metadata_initializations[1][1]), refaddr($zone_module), 'zone module hash passed');
+    is($receiver_module->{DefFn}, 'PIONEERAVR_Define', 'receiver callback preserved');
+    is($zone_module->{DefFn}, 'PIONEERAVRZONE_Define', 'zone callback preserved');
 };
 
 done_testing();

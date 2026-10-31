@@ -1,8 +1,20 @@
 # Changelog
 
-Die Revisionen beziehen sich auf das FHEM-SVN. Die Moduldateien dieses
-Repository-Stands entsprechen dem Export von r31821. Regressionstests werden
-hier zusätzlich bereitgestellt und sind nicht Teil dieser SVN-Veröffentlichungen.
+Die nummerierten Revisionen beziehen sich auf das FHEM-SVN. Basis ist r31821.
+Noch nicht im SVN bestätigte Änderungen werden gesondert aufgeführt.
+Regressionstests werden hier zusätzlich bereitgestellt und sind nicht Teil
+der bisherigen SVN-Veröffentlichungen.
+
+## Metadaten — 2026-10-31, SVN-Commit ausstehend
+
+- `META.json` für PIONEERAVR und PIONEERAVRZONE ergänzt.
+- Registrierung beider Module über `FHEM::Meta::InitMod`.
+- Laufzeitabhängigkeiten, deutsche/englische Beschreibung, Keywords, GPL_2
+  und Repository-/Support-/Commandref-Verweise deklariert.
+- SVN-basierte Versionierung über `$Id` bleibt erhalten.
+- Keine Änderungen an Receiverbefehlen, Verbindungsabläufen oder Timern.
+- Regressionstest für die Registrierung ergänzt, insgesamt 75 Testgruppen.
+- Modulpatch für den eigenen SVN-Checkout bereitgestellt.
 
 ## r31821 — 2026-10-20
 
