@@ -204,6 +204,9 @@ für `FHEM::Meta::InitMod` geprüft. Die tatsächliche Installer-Anzeige ist zus
 im Zielsystem zu prüfen.
 
 Hardwareprüfungen erfolgten mit einem **Pioneer VSX-923 über Netzwerk**.
+Die neue Protokollprüfung wurde am 1. November 2026 am VSX-923 erfolgreich
+getestet; `protocolCompatibility=compatible` wurde bestätigt. Die Erkennung
+eines echten ISCP-Receivers (z. B. VSX-1131) ist noch hardwareseitig zu prüfen.
 Andere Modelle und RS232 wurden nicht an echter Hardware geprüft. Automatisierte
 Tests ersetzen diese Prüfung nicht.
 
