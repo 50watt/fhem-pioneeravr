@@ -1,10 +1,11 @@
 # Changelog
 
-Die nummerierten Revisionen beziehen sich auf das FHEM-SVN. Basis ist r31859; noch nicht im SVN veröffentlichte Änderungen sind separat aufgeführt.
+Die nummerierten Revisionen beziehen sich auf das FHEM-SVN. Aktuell veröffentlicht:
+PIONEERAVR r31862 und PIONEERAVRZONE r31859.
 Regressionstests werden hier zusätzlich bereitgestellt und sind nicht Teil
 der bisherigen SVN-Veröffentlichungen.
 
-## Unveröffentlicht — Protokoll-Kompatibilität
+## r31862 — 2026-11-01
 
 - Reading `protocolCompatibility`: `unknown`, `compatible`, `incompatible`.
 - Einmalige asynchrone ISCP-Power-Abfrage nach erfolgloser Netzwerkprüfung.
@@ -13,6 +14,8 @@ der bisherigen SVN-Veröffentlichungen.
 - Bestätigtes ISCP stoppt Kommunikation mit Hinweis auf `ONKYO_AVR`.
 - Disable, Löschen, Neudefinition und Stromabschaltung brechen die Nebenabfrage ab.
 - Deutsche/englische Commandref und README zur Modell-/Baujahrsabgrenzung ergänzt.
+- 89 automatisierte Testgruppen bestanden; Protokollprüfung am VSX-923 bestätigt.
+- Hardwaretest der Erkennung inkompatibler ISCP-Receiver steht noch aus.
 
 ## r31859 — 2026-10-31
 
