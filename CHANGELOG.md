@@ -1,9 +1,18 @@
 # Changelog
 
-Die nummerierten Revisionen beziehen sich auf das FHEM-SVN. Die Moduldateien
-dieses Repository-Stands entsprechen bytegenau dem Export von r31859.
+Die nummerierten Revisionen beziehen sich auf das FHEM-SVN. Basis ist r31859; noch nicht im SVN veröffentlichte Änderungen sind separat aufgeführt.
 Regressionstests werden hier zusätzlich bereitgestellt und sind nicht Teil
 der bisherigen SVN-Veröffentlichungen.
+
+## Unveröffentlicht — Protokoll-Kompatibilität
+
+- Reading `protocolCompatibility`: `unknown`, `compatible`, `incompatible`.
+- Einmalige asynchrone ISCP-Power-Abfrage nach erfolgloser Netzwerkprüfung.
+- Gültige ISCP-Pakete werden vor dem Pioneer-Zeilenparser erkannt; beliebige
+  CR/LF-Nachrichten bestätigen die Erreichbarkeit nicht mehr.
+- Bestätigtes ISCP stoppt Kommunikation mit Hinweis auf `ONKYO_AVR`.
+- Disable, Löschen, Neudefinition und Stromabschaltung brechen die Nebenabfrage ab.
+- Deutsche/englische Commandref und README zur Modell-/Baujahrsabgrenzung ergänzt.
 
 ## r31859 — 2026-10-31
 
