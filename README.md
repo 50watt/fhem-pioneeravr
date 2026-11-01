@@ -6,10 +6,13 @@ FHEM-Module zur Steuerung von Pioneer AV-Receivern über TCP/IP oder RS232.
 
 ## Stand
 
-Basis ist **FHEM-SVN r31859** vom 31. Oktober 2026. Darauf aufbauend enthält
-dieser Git-Stand eine Protokoll-Kompatibilitätsprüfung; diese Änderung ist noch
-nicht im SVN veröffentlicht. Die Module enthalten strukturierte Metadaten und
-die Registrierung über `FHEM::Meta`.
+Die Protokoll-Kompatibilitätsprüfung wurde am **1. November 2026 mit
+FHEM-SVN r31862** veröffentlicht. Sie ist nach Übernahme in die Updatequelle
+über das reguläre FHEM-Update verfügbar.
+
+Veröffentlichte Modulrevisionen: `PIONEERAVR` r31862 und `PIONEERAVRZONE`
+r31859. Die strukturierten Metadaten und die Registrierung über `FHEM::Meta`
+sind seit r31859 enthalten.
 
 Die deutsche und englische Commandref ist jeweils im Modul enthalten.
 Eine Übersicht der Änderungen steht im [Changelog](CHANGELOG.md).
@@ -40,8 +43,8 @@ get <Installer-Device> showModuleInfo PIONEERAVRZONE
 Die Datei `patches/pioneeravr-metadata.patch` dokumentiert die ursprüngliche
 Änderung gegenüber r31821/r31819. Sie ist ein historischer Patch und darf auf
 r31859 oder bereits aktualisierte Dateien nicht nochmals angewendet werden.
-Für bestehende Installationen genügt das reguläre FHEM-Update, sobald dessen
-Updatequelle r31859 enthält.
+Für bestehende Installationen genügt das reguläre FHEM-Update. Für die neue
+Protokollprüfung muss die Updatequelle mindestens PIONEERAVR r31862 enthalten.
 
 ## Funktionen
 
@@ -51,6 +54,8 @@ Updatequelle r31859 enthält.
 - Zeitgesteuerte Befehlsübertragung mit mindestens 100 ms Abstand;
   Bedienbefehle haben Vorrang vor umfangreichen Hintergrundabfragen.
 - Asynchrone Verbindungsprüfung für die Netzwerkverbindung.
+- Protokollerkennung mit `protocolCompatibility`; bestätigtes ISCP führt zu
+  einem Hinweis auf `ONKYO_AVR` und stoppt die inkompatible Kommunikation.
 - Kommunikationspause über `disable`, einschließlich zugeordneter Zonen.
 - Reading `statusRequestState` für vollständige Statusabfragen.
 - Receiverbestätigtes Reading `networkStandby`; das bisherige Internal bleibt
@@ -100,6 +105,14 @@ Viele neuere Geräte ab der Modellgeneration 2016 verwenden Onkyo/Pioneer ISCP;
 für sie ist `ONKYO_AVR` vorgesehen. Der VSX-1131 wurde im Forum als mit
 PIONEERAVR nicht funktionsfähig gemeldet. Baujahr und Modellreihe sind keine
 zuverlässige Freigabe- oder Sperrliste.
+
+Quellen zur zeitlichen Einordnung und Protokollabgrenzung:
+
+- [RTI-Treiberdokumentation](https://driverstore.rticontrol.com/driver/pioneer-elite-sc):
+  empfiehlt für Pioneer-Modelle ab 2016 den Integra/Onkyo-Treiber.
+- [ISCP-Erfahrungsberichte zum VSX-1131](https://github.com/miracle2k/onkyo-eiscp/issues/87):
+  beschreiben funktionierende ISCP-Steuerung und grenzen den VSX-1130 davon ab.
+  Dies sind Nutzerberichte, keine vollständige Hersteller-Kompatibilitätsliste.
 
 `protocolCompatibility` zeigt `unknown`, `compatible` (erkannte Pioneer-Antwort)
 oder `incompatible` (gültige ISCP-Antwort). Nach der ersten erfolglosen
