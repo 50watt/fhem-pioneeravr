@@ -26,6 +26,7 @@ BEGIN {
     # Prevent loading real transport helpers from a local FHEM installation.
     $INC{'SetExtensions.pm'} = __FILE__;
     $INC{'DevIo.pm'} = __FILE__;
+    $INC{'HttpUtils.pm'} = __FILE__;
     $INC{'FHEM/Meta.pm'} = __FILE__;
     *CORE::GLOBAL::sleep = \&simulated_sleep;
 }
@@ -35,6 +36,15 @@ BEGIN {
     *Time::HiRes::sleep = \&simulated_sleep;
 }
 
+my @compatibility_connects;
+sub HttpUtils_Connect { push @compatibility_connects, $_[0]; return; }
+sub HttpUtils_Close {
+    my ($probe) = @_;
+    delete $main::selectlist{$probe};
+    close(delete $probe->{conn}) if ($probe->{conn});
+    delete @{$probe}{qw(FD directReadFn directWriteFn)};
+    return;
+}
 sub Log3 { return; }
 sub FHEM::Meta::InitMod { push @metadata_initializations, [@_]; return; }
 sub fhem { die "Unexpected FHEM command in isolated test\n"; }
@@ -1232,6 +1242,231 @@ subtest 'Metadata registration preserves module callbacks' => sub {
     is(refaddr($metadata_initializations[1][1]), refaddr($zone_module), 'zone module hash passed');
     is($receiver_module->{DefFn}, 'PIONEERAVR_Define', 'receiver callback preserved');
     is($zone_module->{DefFn}, 'PIONEERAVRZONE_Define', 'zone callback preserved');
+};
+
+sub iscp_frame {
+    my ($payload) = @_;
+    $payload //= "!1PWR01\x1a\r\n";
+    return pack('a4 N N N a*', 'ISCP', 16, length($payload), 0x01000000, $payload);
+}
+
+sub start_compatibility {
+    my ($hash) = @_;
+    @compatibility_connects = ();
+    PIONEERAVR_CompatibilityTimeout($hash);
+    return $compatibility_connects[0];
+}
+
+subtest 'Compatibility: Pioneer reply confirms protocol, arbitrary text does not' => sub {
+    my $hash = new_receiver();
+    $hash->{helper}{AVAILABLE} = 0;
+    readingsSingleUpdate($hash, 'presence', 'absent');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'definition starts unknown');
+    feed_receiver($hash, "hello\r\n");
+    is(ReadingsVal($hash->{NAME}, 'presence', ''), 'absent', 'unknown text is not proof of readiness');
+    feed_receiver($hash, "PW");
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'fragment is not proof');
+    feed_receiver($hash, "R1\r\n");
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'compatible', 'standby reply confirms Pioneer');
+    is(ReadingsVal($hash->{NAME}, 'presence', ''), 'present', 'known reply confirms liveness');
+    ok(!start_compatibility($hash), 'working Pioneer never probes ISCP');
+};
+
+subtest 'Compatibility: ISCP header and payload validation' => sub {
+    my $frame = iscp_frame();
+    for my $length (1..length($frame)-1) {
+        is(PIONEERAVR_ISCPReply(substr($frame, 0, $length)), 0, "fragment $length remains incomplete");
+    }
+    is(PIONEERAVR_ISCPReply($frame), 1, 'complete status accepted');
+    is(PIONEERAVR_ISCPReply(iscp_frame("!1PWR00\x1a")), 1, 'short EOF variant accepted');
+    for my $offset (0, 7, 12, 13) {
+        my $bad = $frame;
+        substr($bad, $offset, 1, chr(2));
+        is(PIONEERAVR_ISCPReply($bad), -1, "invalid header byte $offset rejected");
+    }
+    is(PIONEERAVR_ISCPReply(pack('a4 N N N', 'ISCP',16,1000000,0x01000000)), -1, 'oversized frame rejected');
+    is(PIONEERAVR_ISCPReply(iscp_frame("!2PWR01\r\n")), -1, 'wrong destination rejected');
+    is(PIONEERAVR_ISCPReply(iscp_frame("!1PWRQSTN\r\n")), -1, 'echoed query is not a reply');
+};
+
+subtest 'Compatibility: fragmented ISCP on primary socket stops communication' => sub {
+    my $hash = new_receiver();
+    PIONEERAVR_statusUpdate($hash);
+    feed_receiver($hash, 'IS');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'partial signature buffered');
+    feed_receiver($hash, substr(iscp_frame(), 2));
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'incompatible', 'ISCP detected before CR/LF parser');
+    is(ReadingsVal($hash->{NAME}, 'presence', ''), 'absent', 'ISCP is not Pioneer presence');
+    is(ReadingsVal($hash->{NAME}, 'state', ''), 'incompatible', 'visible reason');
+    is(ReadingsVal($hash->{NAME}, 'statusRequestState', ''), 'aborted', 'scan cancelled');
+    ok(!DevIo_IsOpen($hash), 'primary socket closed');
+    ok(!exists $hash->{helper}{sendQueue}, 'queue discarded');
+    like(PIONEERAVR_Set($hash, [$hash->{NAME}, 'on'], {}), qr/ONKYO_AVR/, 'control explains correct module');
+    my $opens = $open_calls;
+    PIONEERAVR_Ready($hash);
+    PIONEERAVR_OpenDev($hash, 1, 1);
+    is($open_calls, $opens, 'no automatic reconnect');
+    my $writes = scalar @writes;
+    PIONEERAVR_Write($hash, 'PO');
+    is(scalar @writes, $writes, 'zone/raw write cannot bypass detection');
+};
+
+subtest 'Compatibility: malformed binary is not Pioneer presence' => sub {
+    my $hash = new_receiver();
+    $hash->{helper}{AVAILABLE} = 0;
+    readingsSingleUpdate($hash, 'presence', 'absent');
+    my $bad = iscp_frame(); substr($bad, 12, 1, chr(2));
+    feed_receiver($hash, $bad);
+    feed_receiver($hash, "\x00garbage\r\n");
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'invalid traffic stays unknown');
+    is(ReadingsVal($hash->{NAME}, 'presence', ''), 'absent', 'invalid traffic cannot prove liveness');
+    is($hash->{PARTIAL}, '', 'invalid data not retained');
+};
+
+subtest 'Compatibility: fallback is bounded, once only and same host' => sub {
+    my $hash = new_receiver();
+    $hash->{DeviceName} = '[::1]:8000';
+    my $probe = start_compatibility($hash);
+    is($probe->{url}, 'http://[::1]:60128/', 'same IPv6 host and standard ISCP port');
+    is($probe->{noConn2}, 1, 'plain TCP, no HTTP request');
+    is($probe->{output}, iscp_frame("!1PWRQSTN\r\n"), 'read-only power query matches Onkyo framing');
+    PIONEERAVR_CompatibilityTimeout($hash);
+    is(scalar @compatibility_connects, 1, 'no duplicate probe');
+    PIONEERAVR_CompatibilityExpired($probe);
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'silence proves nothing');
+    ok(!exists $hash->{helper}{compatibilityProbe}, 'expired probe cleaned');
+    PIONEERAVR_CompatibilityTimeout($hash);
+    is(scalar @compatibility_connects, 1, 'reconnect does not retry secondary port');
+};
+
+subtest 'Compatibility: real socket pair exercises nonblocking query and fragmented reply' => sub {
+    require Socket; require IO::Handle;
+    my $hash = new_receiver();
+    my $probe = start_compatibility($hash);
+    socketpair(my $client, my $server, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0)
+      or die "socketpair: $!";
+    $probe->{conn} = $client;
+    PIONEERAVR_CompatibilityConnected($probe, undef);
+    PIONEERAVR_CompatibilityWrite($probe);
+    my $wire; sysread($server, $wire, 1024);
+    is($wire, iscp_frame("!1PWRQSTN\r\n"), 'only status query is written');
+    ok(!exists $probe->{directWriteFn}, 'write handler removed after completion');
+    PIONEERAVR_CompatibilityRead($probe);
+    ok($hash->{helper}{compatibilityProbe}, 'would-block read does not abort');
+    syswrite($server, 'ISCP');
+    PIONEERAVR_CompatibilityRead($probe);
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'partial frame waits');
+    syswrite($server, substr(iscp_frame(), 4));
+    PIONEERAVR_CompatibilityRead($probe);
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'incompatible', 'valid response confirms ISCP');
+    ok(!exists $main::selectlist{$probe}, 'secondary socket removed from select list');
+    ok(!exists $probe->{conn}, 'secondary socket closed');
+    close($server);
+};
+
+subtest 'Compatibility: open second port and connection error prove nothing' => sub {
+    my $hash = new_receiver();
+    my $probe = start_compatibility($hash);
+    PIONEERAVR_CompatibilityConnected($probe, 'connection refused');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'failed connect stays unknown');
+    ok(!exists $probe->{owner}, 'error callback detached');
+};
+
+subtest 'Compatibility: Pioneer response cancels pending ISCP and late connect is ignored' => sub {
+    my $hash = new_receiver();
+    my $probe = start_compatibility($hash);
+    feed_receiver($hash, "PWR0\r\n");
+    ok(!exists $hash->{helper}{compatibilityProbe}, 'Pioneer wins and closes fallback');
+    PIONEERAVR_CompatibilityConnected($probe, 'late result');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'compatible', 'late callback cannot override known Pioneer');
+};
+
+subtest 'Compatibility: disable, undefine, redefine and supply off cancel fallback' => sub {
+    for my $action ('disable', 'undefine', 'redefine', 'supply') {
+        my $hash = new_receiver();
+        my $probe = start_compatibility($hash);
+        if ($action eq 'disable') { PIONEERAVR_Attr('set', $hash->{NAME}, 'disable', '1'); }
+        elsif ($action eq 'undefine') { PIONEERAVR_Undef($hash, ''); delete $defs{$hash->{NAME}}; }
+        elsif ($action eq 'redefine') {
+            PIONEERAVR_Define($hash, [$hash->{NAME}, 'PIONEERAVR', 'telnet', 'new.invalid:8000'], {});
+        } else {
+            $hash->{helper}{powerSupplyDevice} = 'supply:state';
+            $defs{supply}{READINGS}{state}{VAL} = 'off';
+            PIONEERAVR_PowerSupplyChanged($hash);
+        }
+        ok(!exists $probe->{owner}, "$action detaches probe");
+        ok(!exists $hash->{helper}{compatibilityProbe}, "$action clears active probe");
+        PIONEERAVR_CompatibilityConnected($probe, 'late result');
+        isnt(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'incompatible', "$action ignores late callback");
+    }
+};
+
+subtest 'Compatibility: serial, disabled, missing and unpowered devices do not probe' => sub {
+    for my $reason ('serial', 'disabled', 'missing', 'unpowered') {
+        my $hash = new_receiver();
+        $hash->{Protocol} = 'serial' if $reason eq 'serial';
+        $hash->{helper}{disabled} = 1 if $reason eq 'disabled';
+        delete $defs{$hash->{NAME}} if $reason eq 'missing';
+        if ($reason eq 'unpowered') {
+            $hash->{helper}{powerSupplyDevice} = 'supply:state';
+            $defs{supply}{READINGS}{state}{VAL} = 'off';
+        }
+        ok(!start_compatibility($hash), "$reason is skipped");
+    }
+};
+
+subtest 'Compatibility: startup check independent of periodic connectionCheck' => sub {
+    my $hash = new_receiver();
+    $attr{$hash->{NAME}}{connectionCheck} = 'off';
+    PIONEERAVR_AfterOpen($hash, 0);
+    my @check = grep { $_->[1] eq 'PIONEERAVR_CompatibilityTimeout' } @timers;
+    is(scalar @check, 1, 'startup deadline armed even without a full scan');
+    is($check[0][0], $clock + 5, 'configured timeout used');
+    my $probe = start_compatibility($hash);
+    ok($probe, 'fallback allowed with periodic checks off');
+    PIONEERAVR_CancelCompatibilityProbe($hash);
+};
+
+subtest 'Compatibility: manual reopen resets detection' => sub {
+    my $hash = new_receiver();
+    PIONEERAVR_Incompatible($hash);
+    $hash->{helper}{compatibilityAttempted} = 1;
+    is(PIONEERAVR_Set($hash, [$hash->{NAME}, 'reopen'], {}), undef, 'manual retry accepted');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'reset to unknown');
+    ok(!$hash->{helper}{compatibilityAttempted}, 'new fallback attempt allowed');
+};
+
+
+subtest 'Compatibility: failed primary connect starts fallback without blocking' => sub {
+    my $hash = new_receiver();
+    $defer_open = 1;
+    @open_callbacks = (); @compatibility_connects = ();
+    PIONEERAVR_OpenDev($hash, 1, 1);
+    my $callback = shift @open_callbacks;
+    $callback->[1]->($hash, 'connection refused');
+    $defer_open = 0;
+    is(scalar @compatibility_connects, 1, 'failure starts one ISCP check');
+    is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', 'connect failure does not classify');
+    PIONEERAVR_CancelCompatibilityProbe($hash);
+};
+
+subtest 'Compatibility: invalid fallback reply and EOF keep unknown' => sub {
+    require Socket; require IO::Handle;
+    for my $case ('invalid', 'eof') {
+        my $hash = new_receiver();
+        my $probe = start_compatibility($hash);
+        socketpair(my $client, my $server, Socket::AF_UNIX(), Socket::SOCK_STREAM(), 0)
+          or die "socketpair: $!";
+        $probe->{conn} = $client;
+        PIONEERAVR_CompatibilityConnected($probe, undef);
+        if ($case eq 'invalid') { syswrite($server, "HTTP/1.0 200 OK\r\n\r\n"); }
+        else { close($server); }
+        PIONEERAVR_CompatibilityRead($probe);
+        is(ReadingsVal($hash->{NAME}, 'protocolCompatibility', ''), 'unknown', "$case is inconclusive");
+        ok(!exists $probe->{conn}, "$case closes socket");
+        ok(!exists $main::selectlist{$probe}, "$case removes select handler");
+        close($server) if ($case eq 'invalid');
+    }
 };
 
 done_testing();

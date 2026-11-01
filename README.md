@@ -6,10 +6,10 @@ FHEM-Module zur Steuerung von Pioneer AV-Receivern über TCP/IP oder RS232.
 
 ## Stand
 
-Dieses Repository enthält den veröffentlichten **FHEM-SVN-Stand r31859**
-vom 31. Oktober 2026. Beide Moduldateien entsprechen bytegenau dem Export
-dieser Revision. Sie enthalten strukturierte Metadaten und die Registrierung
-über `FHEM::Meta`. Die Receiversteuerung wurde dabei nicht geändert.
+Basis ist **FHEM-SVN r31859** vom 31. Oktober 2026. Darauf aufbauend enthält
+dieser Git-Stand eine Protokoll-Kompatibilitätsprüfung; diese Änderung ist noch
+nicht im SVN veröffentlicht. Die Module enthalten strukturierte Metadaten und
+die Registrierung über `FHEM::Meta`.
 
 Die deutsche und englische Commandref ist jeweils im Modul enthalten.
 Eine Übersicht der Änderungen steht im [Changelog](CHANGELOG.md).
@@ -22,7 +22,7 @@ Suchbegriffe, Lizenz und Verweise auf Repository, Fehlerberichte und Commandref.
 Die Modulversion wird weiterhin aus dem SVN-`$Id` abgeleitet. Es wird keine
 zusätzliche unabhängige Release-Version eingeführt.
 
-`PIONEERAVR` benötigt `DevIo`, `SetExtensions`, `Time::HiRes` und `FHEM::Meta`.
+`PIONEERAVR` benötigt `HttpUtils`, `DevIo`, `SetExtensions`, `Time::HiRes` und `FHEM::Meta`.
 `PIONEERAVRZONE` benötigt `SetExtensions`, `Time::HiRes` und `FHEM::Meta` sowie
 ein eingerichtetes `PIONEERAVR`-Hauptgerät als `IODev`. Die Hauptgeräte-Abhängigkeit
 ist eine FHEM-Gerätebeziehung, kein zusätzliches CPAN-Paket.
@@ -90,6 +90,25 @@ reload 71_PIONEERAVRZONE
 
 Ein späteres reguläres FHEM-Update kann manuell installierte Dateien wieder
 durch den dann aktuellen SVN-Stand ersetzen.
+
+## Unterstützte Receiver
+
+Das Modul verwendet das bisherige Pioneer-ASCII-Protokoll auf Basis der
+FY14-Befehlsliste von 2013. **Hardwaregetestet: VSX-923 über Netzwerk.**
+Andere Modelle funktionieren, soweit sie dieses Protokoll unterstützen.
+Viele neuere Geräte ab der Modellgeneration 2016 verwenden Onkyo/Pioneer ISCP;
+für sie ist `ONKYO_AVR` vorgesehen. Der VSX-1131 wurde im Forum als mit
+PIONEERAVR nicht funktionsfähig gemeldet. Baujahr und Modellreihe sind keine
+zuverlässige Freigabe- oder Sperrliste.
+
+`protocolCompatibility` zeigt `unknown`, `compatible` (erkannte Pioneer-Antwort)
+oder `incompatible` (gültige ISCP-Antwort). Nach der ersten erfolglosen
+TCP-Verbindungs-/Antwortprüfung fragt das Modul einmalig asynchron den
+Powerstatus über ISCP am selben Host auf Port 60128 ab. Timeout oder ein
+bloß offener Port reichen nicht als Nachweis. Die Prüfung verwendet `timeout`
+und erfolgt auch bei `connectionCheck=off`; RS232 öffnet keine Nebenverbindung.
+Bestätigtes ISCP stoppt die Kommunikation mit einem Hinweis auf `ONKYO_AVR`.
+`set <name> reopen` oder Neudefinition setzt die Erkennung zurück.
 
 ## Einrichtung
 
@@ -174,9 +193,11 @@ Alternativ mit dem Perl-Testrunner:
 prove t/pioneeravr-timing.t :: 70_PIONEERAVR.pm
 ```
 
-Der aktuelle Stand besteht **75 Testgruppen**. Geprüft werden unter anderem
+Der aktuelle Stand besteht **89 Testgruppen**. Geprüft werden unter anderem
 Befehlsabstände, Priorisierung, Verbindungsverlust, Wiederverbindung, disable,
-Antwortparser, Eingangsnamen, Nullwerte und Network Standby. Die Tests verwenden
+Antwortparser, Eingangsnamen, Nullwerte, Network Standby und Protokollerkennung.
+Die ISCP-Tests prüfen auch die echte Lese-/Schreiblogik über ein lokales
+Socketpaar; der asynchrone Verbindungsaufbau wird simuliert. Die Tests verwenden
 eine simulierte Uhr und Transport-Doubles; sie lesen keine `fhem.cfg` und öffnen
 keine Receiververbindung. Die Metadatenregistrierung wird mit einem Test-Double
 für `FHEM::Meta::InitMod` geprüft. Die tatsächliche Installer-Anzeige ist zusätzlich
